@@ -15,8 +15,8 @@ const assert = std.debug.assert;
 extern fn wasmtime_linker_allow_shadowing(*Linker, bool) callconv(.c) void;
 extern fn wasmtime_linker_clone(*const Linker) callconv(.c) *Linker;
 extern fn wasmtime_linker_define(*Linker, *Store.Ctx, module: [*]const u8, module_len: usize, name: [*]const u8, name_len: usize, item: *const Extern) callconv(.c) ?*Err;
-extern fn wasmtime_linker_define_func(*Linker, module: [*]const u8, module_len: usize, name: [*]const u8, name_len: usize, @"type": *wasm.Func.Type, callback: *const Func.Callback, data: ?*anyopaque, ?*const wasm.Finalizer) callconv(.c) ?*Err;
-extern fn wasmtime_linker_define_func_unchecked(*Linker, module: [*]const u8, module_len: usize, name: [*]const u8, name_len: usize, @"type": *wasm.Func.Type, callback: *const Func.UncheckedCallback, data: ?*anyopaque, ?*const wasm.Finalizer) callconv(.c) ?*Err;
+extern fn wasmtime_linker_define_func(*Linker, module: [*]const u8, module_len: usize, name: [*]const u8, name_len: usize, @"type": *wasm.Func.Type, callback: *const Func.Callback, data: ?*anyopaque, ?wasm.Finalizer.Func) callconv(.c) ?*Err;
+extern fn wasmtime_linker_define_func_unchecked(*Linker, module: [*]const u8, module_len: usize, name: [*]const u8, name_len: usize, @"type": *wasm.Func.Type, callback: *const Func.UncheckedCallback, data: ?*anyopaque, ?wasm.Finalizer.Func) callconv(.c) ?*Err;
 extern fn wasmtime_linker_define_wasi(*Linker) callconv(.c) ?*Err;
 extern fn wasmtime_linker_define_instance(*Linker, *Store.Ctx, name: [*]const u8, name_len: usize, instance: *const Instance) callconv(.c) ?*Err;
 extern fn wasmtime_linker_delete(*Linker) callconv(.c) void;
@@ -57,49 +57,49 @@ pub const Linker = opaque {
         );
     }
 
-    pub fn defineFunc(
-        linker: *Linker,
-        module: []const u8,
-        name: []const u8,
-        @"type": *wasm.Func.Type,
-        callback: *const Func.Callback,
-        data: ?*anyopaque,
-        finalizer: ?*wasm.Finalizer,
-    ) ?*Err {
-        return wasmtime_linker_define_func(
-            linker,
-            module.ptr,
-            module.len,
-            name.ptr,
-            name.len,
-            @"type",
-            callback,
-            data,
-            finalizer,
-        );
-    }
+    // pub fn defineFunc(
+    //     linker: *Linker,
+    //     module: []const u8,
+    //     name: []const u8,
+    //     @"type": *wasm.Func.Type,
+    //     callback: *const Func.Callback,
+    //     data: ?*anyopaque,
+    //     finalizer: ?*wasm.Finalizer,
+    // ) ?*Err {
+    //     return wasmtime_linker_define_func(
+    //         linker,
+    //         module.ptr,
+    //         module.len,
+    //         name.ptr,
+    //         name.len,
+    //         @"type",
+    //         callback,
+    //         data,
+    //         finalizer,
+    //     );
+    // }
 
-    pub fn defineFuncUnchecked(
-        linker: *Linker,
-        module: []const u8,
-        name: []const u8,
-        @"type": *wasm.Func.Type,
-        callback: *const Func.UncheckedCallback,
-        data: ?*anyopaque,
-        finalizer: ?*wasm.Finalizer,
-    ) ?*Err {
-        return wasmtime_linker_define_func_unchecked(
-            linker,
-            module.ptr,
-            module.len,
-            name.ptr,
-            name.len,
-            @"type",
-            callback,
-            data,
-            finalizer,
-        );
-    }
+    // pub fn defineFuncUnchecked(
+    //     linker: *Linker,
+    //     module: []const u8,
+    //     name: []const u8,
+    //     @"type": *wasm.Func.Type,
+    //     callback: *const Func.UncheckedCallback,
+    //     data: ?*anyopaque,
+    //     finalizer: ?*wasm.Finalizer,
+    // ) ?*Err {
+    //     return wasmtime_linker_define_func_unchecked(
+    //         linker,
+    //         module.ptr,
+    //         module.len,
+    //         name.ptr,
+    //         name.len,
+    //         @"type",
+    //         callback,
+    //         data,
+    //         finalizer,
+    //     );
+    // }
 
     pub fn defineInstance(
         linker: *Linker,

@@ -13,7 +13,7 @@ extern fn wasmtime_extern_delete(*Extern) callconv(.c) void;
 extern fn wasmtime_extern_type(*Store.Ctx, *Extern) callconv(.c) ?*Extern.Type;
 
 pub const Extern = extern struct {
-    const Type = wasm.Extern.Type;
+    pub const Type = wasm.Extern.Type;
 
     pub const Kind = enum(u8) {
         func = c.WASMTIME_EXTERN_FUNC,
@@ -34,6 +34,35 @@ pub const Extern = extern struct {
     },
 
     pub const deinit = wasmtime_extern_delete;
+
+    pub fn init(kind: Kind, of: @FieldType(Extern, "of")) Extern {
+        return .{ .kind = kind, .of = of };
+    }
+
+    pub fn asFunc(self: *const Extern) ?Func {
+        if (self.kind != .func) return null;
+        return self.of.func;
+    }
+
+    pub fn asGlobal(self: *const Extern) ?Global {
+        if (self.kind != .global) return null;
+        return self.of.global;
+    }
+
+    pub fn asTable(self: *const Extern) ?Table {
+        if (self.kind != .table) return null;
+        return self.of.table;
+    }
+
+    pub fn asMemory(self: *const Extern) ?Memory {
+        if (self.kind != .memory) return null;
+        return self.of.memory;
+    }
+
+    pub fn asSharedMemory(self: *const Extern) ?*SharedMemory {
+        if (self.kind != .shared_memory) return null;
+        return self.of.shared_memory;
+    }
 
     pub fn getType(val: *Extern, context: *Store.Ctx) *Type {
         return wasmtime_extern_type(context, val).?;

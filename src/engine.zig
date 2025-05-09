@@ -7,7 +7,7 @@ const assert = std.debug.assert;
 
 extern fn wasm_engine_delete(*Engine) callconv(.c) void;
 extern fn wasm_engine_new() callconv(.c) ?*Engine;
-extern fn wasm_engine_new_with_config(*const Config) callconv(.c) ?*Engine;
+extern fn wasm_engine_new_with_config(*Config) callconv(.c) ?*Engine;
 extern fn wasmtime_engine_clone(*const Engine) callconv(.c) ?*Engine;
 extern fn wasmtime_engine_increment_epoch(*Engine) callconv(.c) void;
 extern fn wasmtime_engine_is_pulley(*const Engine) callconv(.c) bool;
@@ -22,7 +22,7 @@ pub const Engine = opaque {
         return wasm_engine_new().?;
     }
 
-    pub fn initConfig(config: *const Config) *Engine {
+    pub fn initConfig(config: *Config) *Engine {
         return wasm_engine_new_with_config(config).?;
     }
 
@@ -35,3 +35,14 @@ pub const Engine = opaque {
         return wasmtime_module_validate(engine, binary.ptr, binary.len);
     }
 };
+
+test Engine {
+    const engine = Engine.init();
+    defer engine.deinit();
+
+    const engine1 = engine.clone();
+    defer engine1.deinit();
+
+    const engine2 = Engine.initConfig(.init());
+    defer engine2.deinit();
+}

@@ -8,17 +8,17 @@ extern fn wasmtime_guestprofiler_finish(*GuestProfiler, *wasm.ConstVec(u8)) call
 extern fn wasmtime_guestprofiler_new(
     module_name: *const wasm.ConstVec(u8),
     interval_nanos: u64,
-    modules: [*]const GuestProfilerModule,
+    modules: [*]const GuestProfiler.GuestProfilerModule,
     modules_len: usize,
 ) callconv(.c) ?*GuestProfiler;
 extern fn wasmtime_guestprofiler_sample(*GuestProfiler, *const Store, delta_nanos: u64) callconv(.c) void;
 
-pub const GuestProfilerModule = extern struct {
-    name: wasm.ConstVec(u8),
-    mod: *const Module,
-};
-
 pub const GuestProfiler = opaque {
+    pub const GuestProfilerModule = extern struct {
+        name: wasm.ConstVec(u8),
+        mod: *const Module,
+    };
+
     pub const deinit = wasmtime_guestprofiler_delete;
     pub const sample = wasmtime_guestprofiler_sample;
 
@@ -26,9 +26,9 @@ pub const GuestProfiler = opaque {
         name: []const u8,
         interval_nanos: u64,
         modules: []const GuestProfilerModule,
-    ) *GuestProfiler {
+    ) !*GuestProfiler {
         return wasmtime_guestprofiler_new(
-            &.of(name),
+            &.from(name),
             interval_nanos,
             modules.ptr,
             modules.len,

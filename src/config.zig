@@ -11,7 +11,7 @@ const TagPayload = std.meta.TagPayload;
 
 extern fn wasm_config_new() callconv(.c) ?*Config;
 extern fn wasm_config_delete(*Config) callconv(.c) void;
-extern fn wasmtime_config_cache_config_load(*Config, [*:0]const u8) callconv(.c) ?*Err;
+extern fn wasmtime_config_cache_config_load(*Config, ?[*:0]const u8) callconv(.c) ?*Err;
 extern fn wasmtime_config_cranelift_flag_enable(*Config, [*:0]const u8) callconv(.c) void;
 extern fn wasmtime_config_cranelift_flag_set(*Config, [*:0]const u8, [*:0]const u8) callconv(.c) void;
 extern fn wasmtime_config_host_memory_creator_set(*Config, *Config.MemoryCreator) callconv(.c) void;
@@ -109,9 +109,21 @@ pub const Config = opaque {
     ///
     /// An error is returned if the cache configuration could not be loaded or if the
     /// cache could not be enabled.
-    pub fn loadCacheConfig(config: *Config, path: [*:0]const u8) ?*Err {
+    pub fn loadCacheConfig(
+        config: *Config,
+        location: union(enum) {
+            default,
+            path: [*:0]const u8,
+        },
+    ) ?*Err {
         comptime assert(Feature.cache.isEnabled());
-        return wasmtime_config_cache_config_load(config, path);
+        return wasmtime_config_cache_config_load(
+            config,
+            switch (location) {
+                .path => |path| path,
+                .default => null,
+            },
+        );
     }
 
     pub fn setProp(
@@ -173,7 +185,7 @@ pub const Config = opaque {
             new_size: usize,
         ) callconv(.c) ?*Err,
 
-        finalizer: ?*const fn (*anyopaque) callconv(.c) void,
+        finalizer: ?wasm.Finalizer.Func,
     };
 
     /// A representation of custom memory creator and methods for an instance of
@@ -203,7 +215,7 @@ pub const Config = opaque {
             memory_ret: *LinearMemory,
         ) callconv(.c) void,
 
-        finalizer: ?*const fn (*anyopaque) callconv(.c) void,
+        finalizer: ?wasm.Finalizer.Func,
     };
 
     /// A representation of custom stack creator.
@@ -220,7 +232,7 @@ pub const Config = opaque {
 
         env: ?*anyopaque,
         new_stack: *const NewStackMemoryCallback,
-        finalizer: ?*const wasm.Finalizer,
+        finalizer: ?wasm.Finalizer.Func,
     };
 
     pub const StackMemory = extern struct {
@@ -231,7 +243,7 @@ pub const Config = opaque {
 
         env: ?*anyopaque,
         get_stack_memory: *const void,
-        finalizer: ?*const wasm.Finalizer,
+        finalizer: ?wasm.Finalizer.Func,
     };
 
     pub const Prop = union(enum) {
@@ -677,3 +689,71 @@ pub const Config = opaque {
         };
     };
 };
+
+test Config {
+    @setEvalBranchQuota(50000);
+    const builtin = @import("builtin");
+
+    for ([_]Config.Prop{
+        .{ .debug_info = true },
+        .{ .max_wasm_stack = 8388608 },
+        .{ .wasm_threads = true },
+        .{ .wasm_reference_types = true },
+        .{ .wasm_simd = true },
+        .{ .wasm_relaxed_simd = true },
+        .{ .wasm_relaxed_simd_deterministic = true },
+        .{ .wasm_bulk_memory = true },
+        .{ .wasm_multi_value = true },
+        .{ .wasm_multi_memory = true },
+        .{ .wasm_tail_call = true },
+        .{ .wasm_function_references = true },
+        .{ .wasm_gc = true },
+        .{ .wasm_wide_arithmetic = true },
+        .{ .consume_fuel = true },
+        .{ .strategy = .auto },
+        .{ .strategy = .cranelift },
+        .{ .cranelift_debug_verifier = true },
+        .{ .cranelift_opt_level = .none },
+        .{ .cranelift_opt_level = .speed },
+        .{ .cranelift_opt_level = .speed_and_size },
+        .{ .profiler = .none },
+        .{ .parallel_compilation = true },
+        .{ .cranelift_nan_canonicalization = true },
+        .{ .native_unwind_info = true },
+        .{ .macos_use_mach_ports = false },
+        .{ .memory_init_cow = true },
+    }) |prop|
+        switch (prop) {
+            inline else => |val, tag| Config.init()
+                .setProp(tag, val),
+        };
+
+    const target_str: ?[*:0]const u8 = switch (builtin.target.os.tag) {
+        .linux => std.fmt.comptimePrint(
+            "{s}-unknown-linux-gnu",
+            .{@tagName(builtin.target.cpu.arch)},
+        ),
+        .macos => std.fmt.comptimePrint(
+            "{s}-apple-darwin",
+            .{@tagName(builtin.target.cpu.arch)},
+        ),
+        else => null,
+    };
+
+    if (target_str) |target|
+        if (Config.init().setTarget(target)) |err|
+            return err.testFail();
+
+    Config.init().setCraneliftFlag("opt_level", "none");
+    Config.init().enableCraneliftFlag("unwind_info");
+
+    if (Config.init().loadCacheConfig(.default)) |err|
+        return err.testFail();
+
+    if (Config.init().loadCacheConfig(.{
+        .path = "nonexistent.toml",
+    })) |err|
+        err.deinit()
+    else
+        return error.ExpectedWasmtimeError;
+}

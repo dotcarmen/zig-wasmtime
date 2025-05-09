@@ -1,0 +1,20 @@
+name: zig build
+
+on:
+  push:
+    branches:
+      - "*"
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: "${{ matrix.os }}"
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+      - name: setup zig
+        uses: mlugg/setup-zig@v2
+      - run: zig build test

@@ -1,8 +1,9 @@
-const Engine = @import("engine.zig").Engine;
-const Err = @import("error.zig").Err;
-const Feature = @import("conf.zig").Feature;
-const Memory = @import("memory.zig").Memory;
-const wasm = @import("wasm.zig");
+const wasmtime = @import("root.zig");
+const Engine = wasmtime.Engine;
+const Err = wasmtime.Err;
+const Feature = wasmtime.Feature;
+const Memory = wasmtime.Memory;
+const wasm = wasmtime.wasm;
 
 extern fn wasmtime_sharedmemory_clone(*const SharedMemory) callconv(.c) ?*SharedMemory;
 extern fn wasmtime_sharedmemory_data(*const SharedMemory) callconv(.c) [*]u8;
@@ -28,6 +29,10 @@ pub const SharedMemory = opaque {
         if (wasmtime_sharedmemory_new(engine, @"type", &result)) |err|
             return .{ .err = err };
         return .{ .ok = result.? };
+    }
+
+    pub fn asExtern(self: *SharedMemory) wasmtime.Extern {
+        return .init(.shared_memory, .{ .shared_memory = self });
     }
 
     pub fn clone(self: *const SharedMemory) *SharedMemory {

@@ -1,7 +1,5 @@
-const Func = @import("func.zig").Func;
-const Trap = @import("trap.zig").Trap;
-const Val = @import("val.zig").Val;
-const wasm = @import("wasm.zig");
+const wasmtime = @import("root.zig");
+const wasm = wasmtime.wasm;
 
 extern fn wasmtime_call_future_delete(future: *AsyncFunc.CallFuture) callconv(.c) void;
 extern fn wasmtime_call_future_poll(future: *AsyncFunc.CallFuture) callconv(.c) bool;
@@ -12,17 +10,17 @@ pub const AsyncFunc = struct {
 
         callback: *const Callback,
         env: ?*anyopaque,
-        finalizer: ?*const wasm.Finalizer,
+        finalizer: ?wasm.Finalizer.Func,
     };
 
     pub const AsyncCallback = fn (
         env: ?*anyopaque,
-        caller: *Func.Caller,
-        args: [*]const Val,
+        caller: *wasmtime.Func.Caller,
+        args: [*]const wasmtime.Val,
         nargs: usize,
-        results: [*]Val,
+        results: [*]wasmtime.Val,
         nresults: usize,
-        trap_ret: *?*Trap,
+        trap_ret: *?*wasmtime.Trap,
         continuation_ret: *Continuation,
     ) callconv(.c) void;
 

@@ -7,6 +7,7 @@ const Trap = @import("trap.zig").Trap;
 
 const std = @import("std");
 const assert = std.debug.assert;
+const testing = std.testing;
 
 extern fn wasm_exporttype_name(*const ExportType) callconv(.c) *const ConstVec(u8);
 extern fn wasm_exporttype_new(*const ConstVec(u8), *Extern.Type) callconv(.c) ?*ExportType;
@@ -49,7 +50,7 @@ extern fn wasm_globaltype_mutability(*const Global.Type) callconv(.c) Mutability
 extern fn wasm_globaltype_new(*Val.Type, Mutability) callconv(.c) ?*Global.Type;
 extern fn wasm_importtype_module(*const ImportType) callconv(.c) *const ConstVec(u8);
 extern fn wasm_importtype_name(*const ImportType) callconv(.c) *const ConstVec(u8);
-extern fn wasm_importtype_new(module: *const Module, name: *const ConstVec(u8), @"type": *const Extern.Type) callconv(.c) ?*ImportType;
+extern fn wasm_importtype_new(module: *const ConstVec(u8), name: *const ConstVec(u8), @"type": *const Extern.Type) callconv(.c) ?*ImportType;
 extern fn wasm_importtype_type(*const ImportType) callconv(.c) *const Extern.Type;
 extern fn wasm_instance_delete(*Frame) callconv(.c) void;
 extern fn wasm_instance_copy(*const Frame) callconv(.c) ?*Frame;
@@ -94,7 +95,23 @@ extern fn wasmtime_memorytype_new(min: u64, max_present: bool, max: u64, is64: b
 
 pub const FuncCallback = fn (args: *const ConstVec(Val), results: *Vec(Val)) ?*Trap;
 pub const FuncWithEnvCallback = fn (env: ?*anyopaque, args: *const ConstVec(Val), results: *Vec(Val)) ?*Trap;
-pub const Finalizer = fn (*anyopaque) callconv(.c) void;
+
+pub const Finalizer = struct {
+    pub const Func = *const fn (*anyopaque) callconv(.c) void;
+
+    pub fn of(T: type) ?Finalizer.Func {
+        if (!@hasDecl(T, "finalize"))
+            return null;
+
+        const finalize: fn (*T) void = T.finalize;
+
+        return struct {
+            fn wrapped(val: *anyopaque) callconv(.c) void {
+                finalize(@ptrCast(val));
+            }
+        }.wrapped;
+    }
+};
 
 pub fn ConstVec(T: type) type {
     return extern struct {
@@ -106,7 +123,12 @@ pub fn ConstVec(T: type) type {
             .data = null,
         };
 
-        pub fn of(data: []const T) @This() {
+        pub fn take(data: []const T) !@This() {
+            const dup = try std.heap.c_allocator.dupe(T, data);
+            return .from(dup);
+        }
+
+        pub fn from(data: []const T) @This() {
             return .{
                 .size = data.len,
                 .data = data.ptr,
@@ -130,7 +152,12 @@ pub fn Vec(T: type) type {
             .data = null,
         };
 
-        pub fn of(data: []T) @This() {
+        pub fn take(data: []T) !@This() {
+            const dup = try std.heap.c_allocator.dupe(T, data);
+            return .from(dup);
+        }
+
+        pub fn from(data: []T) @This() {
             return .{
                 .size = data.len,
                 .data = data.ptr,
@@ -170,11 +197,11 @@ pub fn declareType(T: type, name: @Type(.enum_literal)) type {
 
     const wasm_copy = @extern(
         *const fn (*const T) callconv(.c) ?*T,
-        .{ .name = basename ++ "delete" },
+        .{ .name = basename ++ "copy" },
     );
 
     return opaque {
-        pub const deinit = wasm_delete;
+        pub const deinit = wasm_delete.*;
 
         pub fn clone(@"type": *const T) *T {
             return wasm_copy(@"type").?;
@@ -238,8 +265,8 @@ pub const Val = extern struct {
     };
 
     pub const Type = opaque {
-        pub fn init(kind: Kind) *Type {
-            return wasm_valtype_new(kind).?;
+        pub fn init(kind: Kind) !*Type {
+            return wasm_valtype_new(kind) orelse error.OutOfMemory;
         }
 
         pub fn getKind(@"type": *const Type) Kind {
@@ -263,12 +290,40 @@ pub const ImportType = opaque {
     pub const deinit = declare.deinit;
     pub const clone = declare.clone;
 
+    pub fn init(
+        module: []const u8,
+        name: []const u8,
+        @"type": *const Extern.Type,
+    ) !*ImportType {
+        return wasm_importtype_new(
+            &try .take(module),
+            &try .take(name),
+            @"type".clone(),
+        ) orelse error.OutOfMemory;
+    }
+
     pub fn getName(@"type": *const ImportType) []const u8 {
         return wasm_importtype_name(@"type").to().?;
     }
 
     pub fn getModule(@"type": *const ImportType) []const u8 {
         return wasm_importtype_module(@"type").to().?;
+    }
+
+    test ImportType {
+        const functype = try Func.Type.init(&.{}, &.{});
+        const t1 = try ImportType.init("a", "b", functype.asExternType());
+        try testing.expectEqualSlices(u8, "a", t1.getModule());
+        try testing.expectEqualSlices(u8, "b", t1.getName());
+        const asType = t1.getType();
+        const asFuncType = asType.asFuncTypeConst();
+        try testing.expect(functype.equals(asFuncType.?));
+
+        const globaltype = try Global.Type.init(try .init(.i32), .@"var");
+        const t2 = try ImportType.init("", "", globaltype.asExternType());
+        try testing.expect(t2.getModule().len == 0);
+        try testing.expect(t2.getName().len == 0);
+        try testing.expect(t2.getType().asGlobalTypeConst() != null);
     }
 };
 
@@ -279,8 +334,10 @@ pub const ExportType = opaque {
     pub const deinit = declare.deinit;
     pub const clone = declare.clone;
 
-    pub fn init(name: []const u8, @"type": *Extern.Type) *ExportType {
-        return wasm_exporttype_new(&.of(name), @"type").?;
+    pub fn init(name: []const u8, @"type": *Extern.Type) !*ExportType {
+        const owned_name: ConstVec(u8) = try .take(name);
+        return wasm_exporttype_new(&owned_name, @"type") orelse
+            error.OutOfMemory;
     }
 
     pub fn getName(@"type": *const ExportType) []const u8 {
@@ -307,13 +364,13 @@ pub fn declareRefBase(T: type, name: @Type(.enum_literal)) type {
     );
 
     const setHostInfoWithFinalizerFn = @extern(
-        *const fn (*T, ?*anyopaque, ?*const Finalizer) callconv(.c) ?*anyopaque,
+        *const fn (*T, ?*anyopaque, ?Finalizer.Func) callconv(.c) ?*anyopaque,
         .{ .name = basename ++ "set_host_info_with_finalizer" },
     );
 
     return opaque {
-        pub const deinit = deleteFn;
-        pub const getHostInfo = getHostInfoFn;
+        pub const deinit = deleteFn.*;
+        pub const getHostInfo = getHostInfoFn.*;
 
         pub fn clone(self: *const T) *T {
             return copyFn(self).?;
@@ -321,7 +378,7 @@ pub fn declareRefBase(T: type, name: @Type(.enum_literal)) type {
 
         pub fn setHostInfo(self: *T, env: struct {
             env: ?*anyopaque = null,
-            finalizer: ?*const Finalizer = null,
+            finalizer: ?Finalizer.Func = null,
         }) void {
             setHostInfoWithFinalizerFn(self, env.env, env.finalizer);
         }
@@ -358,10 +415,10 @@ pub fn declareRef(T: type, name: @Type(.enum_literal)) type {
         pub const getHostInfo = declare.getHostInfo;
         pub const setHostInfo = declare.setHostInfo;
 
-        pub const asRef = asRefFn;
-        pub const asConstRef = asConstRefFn;
-        pub const fromRef = fromRefFn;
-        pub const fromConstRef = fromConstRefFn;
+        pub const asRef = asRefFn.*;
+        pub const asConstRef = asConstRefFn.*;
+        pub const fromRef = fromRefFn.*;
+        pub const fromConstRef = fromConstRefFn.*;
     };
 }
 
@@ -446,8 +503,9 @@ pub const Foreign = opaque {
     pub const fromRef = declare.fromRef;
     pub const fromConstRef = declare.fromConstRef;
 
-    pub fn init(store: *Store) *Foreign {
-        return wasm_foreign_new(store).?;
+    pub fn init(store: *Store) !*Foreign {
+        return wasm_foreign_new(store) orelse
+            error.OutOfMemory;
     }
 };
 
@@ -469,7 +527,8 @@ pub const Func = opaque {
         @"type": *const Func.Type,
         func: FuncCallback,
     ) *Func {
-        return wasm_func_new(store, @"type", func).?;
+        return wasm_func_new(store, @"type", func) orelse
+            error.OutOfMemory;
     }
 
     pub fn initEnv(
@@ -477,9 +536,15 @@ pub const Func = opaque {
         @"type": *const Func.Type,
         func: FuncCallback,
         env: ?*anyopaque,
-        finalizer: ?*const Finalizer,
+        finalizer: ?Finalizer.Func,
     ) *Func {
-        return wasm_func_new_with_env(store, @"type", func, env, finalizer).?;
+        return wasm_func_new_with_env(
+            store,
+            @"type",
+            func,
+            env,
+            finalizer,
+        ) orelse error.OutOfMemory;
     }
 
     pub fn getType(func: *const Func) *Func.Type {
@@ -494,18 +559,92 @@ pub const Func = opaque {
         pub const clone = declare_type.clone;
         pub const deinit = declare_type.deinit;
 
-        pub fn init(params: []const *const Val.Type, results: []const *const Val.Type) *Type {
-            return wasm_functype_new(&.of(params), &.of(results)).?;
+        pub fn init(params: []const *const Val.Type, results: []const *const Val.Type) !*Type {
+            var p: ConstVec(*const Val.Type) = try .take(params);
+            var r: ConstVec(*const Val.Type) = try .take(results);
+            return wasm_functype_new(&p, &r) orelse
+                error.OutOfMemory;
         }
 
         pub fn getParams(@"type": *const Func.Type) []const *const Val.Type {
-            return wasm_functype_params(@"type").to().?;
+            const result = wasm_functype_params(@"type");
+            return result.to().?;
         }
 
         pub fn getResults(@"type": *const Func.Type) []const *const Val.Type {
             return wasm_functype_results(@"type").to().?;
         }
+
+        pub fn equals(lhs: *const Func.Type, rhs: *const Func.Type) bool {
+            const lhs_params = lhs.getParams();
+            const rhs_params = rhs.getParams();
+
+            if (lhs_params.len != rhs_params.len) return false;
+            for (lhs_params, 0..) |lhs_param, i| {
+                const lhs_kind = lhs_param.getKind();
+                const rhs_kind = rhs_params[i].getKind();
+                if (lhs_kind != rhs_kind)
+                    return false;
+            }
+
+            const lhs_results = lhs.getResults();
+            const rhs_results = rhs.getResults();
+            if (lhs_results.len != rhs_results.len) return false;
+            for (lhs_results, 0..) |lhs_result, i| {
+                const rhs_result = rhs_results[i];
+                if (lhs_result.getKind() != rhs_result.getKind())
+                    return false;
+            }
+
+            return true;
+        }
     };
+
+    test Type {
+        const t1: *Func.Type = try .init(&.{}, &.{});
+        defer t1.deinit();
+        try testing.expect(t1.getParams().len == 0);
+        try testing.expect(t1.getResults().len == 0);
+
+        const t2 = try Func.Type.init(&.{try .init(.i32)}, &.{});
+        defer t2.deinit();
+        try testing.expect(t2.getParams().len == 1);
+        try testing.expect(t2.getResults().len == 0);
+
+        const t3 = try Func.Type.init(&.{}, &.{try .init(.i32)});
+        defer t3.deinit();
+        try testing.expect(t3.getParams().len == 0);
+        try testing.expect(t3.getResults().len == 1);
+
+        const t4 = try Func.Type.init(&.{try .init(.i32)}, &.{try .init(.i32)});
+        defer t4.deinit();
+        try testing.expect(t4.getParams().len == 1);
+        try testing.expect(t4.getResults().len == 1);
+
+        const t5 = try Func.Type.init(
+            &.{ try .init(.i32), try .init(.i64), try .init(.i64) },
+            &.{ try .init(.i32), try .init(.i64), try .init(.i64) },
+        );
+        defer t5.deinit();
+
+        const params = t5.getParams();
+        try testing.expect(params.len == 3);
+        try testing.expect(params[0].getKind() == .i32);
+        try testing.expect(params[1].getKind() == .i64);
+        try testing.expect(params[2].getKind() == .i64);
+
+        const results = t5.getParams();
+        try testing.expect(results.len == 3);
+        try testing.expect(results[0].getKind() == .i32);
+        try testing.expect(results[1].getKind() == .i64);
+        try testing.expect(results[2].getKind() == .i64);
+
+        const asExtern = t5.asExternType();
+        try testing.expect(null != asExtern.asFuncType());
+        try testing.expect(null == asExtern.asGlobalType());
+        try testing.expect(null == asExtern.asMemoryType());
+        try testing.expect(null == asExtern.asTableType());
+    }
 };
 
 pub const Global = opaque {
@@ -519,8 +658,9 @@ pub const Global = opaque {
     pub const fromRef = declare.fromRef;
     pub const fromConstRef = declare.fromConstRef;
 
-    pub fn init(store: *Store, @"type": *const Global.Type, initVal: *const Val) *Global {
-        return wasm_global_new(store, @"type", initVal).?;
+    pub fn init(store: *Store, @"type": *const Global.Type, initVal: *const Val) !*Global {
+        return wasm_global_new(store, @"type", initVal) orelse
+            error.OutOfMemory;
     }
 
     pub fn get(global: *const Global) Val {
@@ -543,10 +683,28 @@ pub const Global = opaque {
         pub const deinit = declare_type.deinit;
         pub const clone = declare_type.clone;
 
-        pub fn init(@"type": *Val.Type, mut: Mutability) *Type {
-            return wasm_globaltype_new(@"type", mut).?;
+        pub fn init(@"type": *Val.Type, mut: Mutability) !*Type {
+            return wasm_globaltype_new(@"type", mut) orelse
+                error.OutOfMemory;
         }
     };
+
+    test Type {
+        const t1 = try Global.Type.init(try .init(.i32), .@"var");
+        defer t1.deinit();
+        try testing.expect(t1.getContent().getKind() == .i32);
+        try testing.expect(t1.getMutability() == .@"var");
+
+        const t2 = try Global.Type.init(try .init(.i32), .@"const");
+        defer t2.deinit();
+        try testing.expect(t2.getContent().getKind() == .i32);
+        try testing.expect(t2.getMutability() == .@"const");
+        const asExtern = t2.asExternType();
+        try testing.expect(asExtern.asGlobalType() != null);
+        try testing.expect(asExtern.asFuncType() == null);
+        try testing.expect(asExtern.asMemoryType() == null);
+        try testing.expect(asExtern.asTableType() == null);
+    }
 };
 
 pub const Table = opaque {
@@ -575,8 +733,9 @@ pub const Table = opaque {
         pub const deinit = declare_type.deinit;
         pub const clone = declare_type.clone;
 
-        pub fn init(@"type": *Val.Type, limits: *const Limits) *Type {
-            return wasm_tabletype_new(@"type", limits).?;
+        pub fn init(@"type": *Val.Type, limits: *const Limits) !*Type {
+            return wasm_tabletype_new(@"type", limits) orelse
+                error.OutOfMemory;
         }
     };
 };
@@ -594,8 +753,9 @@ pub const Memory = opaque {
     pub const fromRef = declare.fromRef;
     pub const fromConstRef = declare.fromConstRef;
 
-    pub fn init(store: *Store, @"type": *const Type) *Memory {
-        return wasm_memory_new(store, @"type").?;
+    pub fn init(store: *Store, @"type": *const Type) !*Memory {
+        return wasm_memory_new(store, @"type") orelse
+            error.OutOfMemory;
     }
 
     pub fn getData(memory: *Memory) []u8 {
@@ -694,7 +854,7 @@ pub const Instance = opaque {
         const result = wasm_instance_new(
             store,
             module,
-            &.of(imports),
+            &.from(imports),
             &trap_result,
         );
 
@@ -706,3 +866,15 @@ pub const Instance = opaque {
             unreachable;
     }
 };
+
+test ExportType {
+    const et = try ExportType.init(
+        "x",
+        Memory.Type
+            .init(.{ .min = 0 }, false, false)
+            .asExternType(),
+    );
+
+    try std.testing.expectEqualSlices(u8, "x", et.getName());
+    _ = et.getType();
+}

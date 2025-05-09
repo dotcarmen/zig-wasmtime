@@ -11,7 +11,7 @@ extern fn wasmtime_memory_size(*const Store.Ctx, *const Memory) callconv(.c) u64
 extern fn wasmtime_memory_type(*const Store.Ctx, *const Memory) callconv(.c) ?*Memory.Type;
 
 pub const Memory = extern struct {
-    const Type = wasm.Memory.Type;
+    pub const Type = wasm.Memory.Type;
 
     store_id: Store.Id,
     __private: usize,
@@ -26,6 +26,10 @@ pub const Memory = extern struct {
         if (wasmtime_memory_new(ctx, @"type", &result)) |err|
             return .{ .err = err };
         return .{ .ok = result };
+    }
+
+    pub fn asExtern(memory: *const Memory) Extern {
+        return .init(.memory, .{ .memory = memory.* });
     }
 
     pub fn getDataPtr(memory: *const Memory, ctx: *const Store.Ctx) [*]u8 {

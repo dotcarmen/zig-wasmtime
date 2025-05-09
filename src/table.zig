@@ -12,8 +12,8 @@ extern fn wasmtime_table_size(*const Store.Ctx, *const Table) callconv(.c) u64;
 extern fn wasmtime_table_type(*const Store.Ctx, *const Table) callconv(.c) ?*Table.Type;
 
 pub const Table = extern struct {
-    const Index = enum(u64) { _ };
-    const Type = wasm.Table.Type;
+    pub const Index = enum(u64) { _ };
+    pub const Type = wasm.Table.Type;
 
     store_id: Store.Id,
     __private: usize,

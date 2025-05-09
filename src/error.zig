@@ -12,11 +12,11 @@ extern fn wasmtime_error_wasm_trace(*const Err, *wasm.ConstVec(*wasm.Frame)) cal
 pub const Err = opaque {
     pub const deinit = wasmtime_error_delete;
 
-    pub fn init(message: [:0]const u8) *Err {
-        return wasmtime_error_new(message.ptr).?;
+    pub fn init(msg: [:0]const u8) *Err {
+        return wasmtime_error_new(msg.ptr).?;
     }
 
-    pub fn render(err: *const Err) []const u8 {
+    pub fn message(err: *const Err) []const u8 {
         var result: wasm.ConstVec(u8) = .empty;
         wasmtime_error_message(err, &result);
         return result.to().?;
@@ -35,10 +35,28 @@ pub const Err = opaque {
         return result.to().?;
     }
 
+    pub fn testFail(err: *Err) error{WasmtimeError} {
+        defer err.deinit();
+        const msg = err.message();
+        defer std.heap.c_allocator.free(msg);
+        std.debug.print(
+            \\wasmtime returned error: {s}
+            \\
+        , .{msg});
+        return error.WasmtimeError;
+    }
+
     pub fn Result(Ok: type) type {
         return union(enum) {
             ok: Ok,
             err: *Err,
+
+            pub fn testFail(self: @This()) !Ok {
+                return switch (self) {
+                    .ok => |ok| ok,
+                    .err => |err| err.testFail(),
+                };
+            }
         };
     }
 };

@@ -18,6 +18,8 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
+        .link_libcpp = target.result.os.tag != .macos,
     });
     mod.addSystemIncludePath(c_api.getIncludeDir());
     mod.addObjectFile(c_api.getObjectFile());

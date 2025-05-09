@@ -120,11 +120,6 @@ fn make(step: *Step, opts: Step.MakeOptions) !void {
     const build_dir = try b.cache_root.join(alloc, &.{api.build_dir});
     const install_prefix = try b.cache_root.join(alloc, &.{api.install_prefix});
 
-    // const build_dir = try b.cache_root.handle
-    //     .realpathAlloc(alloc, api.build_dir);
-    // const install_prefix = try b.cache_root.handle
-    //     .realpathAlloc(alloc, api.install_prefix);
-
     try runCmake(
         api,
         build_dir,

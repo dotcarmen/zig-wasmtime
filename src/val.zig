@@ -30,22 +30,29 @@ const I31Wrapper = packed struct(u32) {
 pub const Val = extern struct {
     const V128 = [16]u8;
 
-    kind: ValKind,
+    kind: Kind,
     of: extern union {
         i32: i32,
         i64: i64,
+        u32: u32,
+        u64: u64,
         f32: f32,
         f64: f64,
         anyref: AnyRef,
         externref: ExternRef,
-        func: Func,
+        funcref: Func,
         v128: V128,
+        ptr: ?*anyopaque,
 
         comptime {
             assert(@alignOf(@This()) == 8);
             assert(@sizeOf(@This()) == 16);
         }
-    },
+    } = undefined,
+
+    pub fn init(kind: Kind, of: @FieldType(Val, "of")) Val {
+        return .{ .kind = kind, .of = of };
+    }
 
     pub fn clone(val: *const Val, ctx: *Store.Ctx) Val {
         var result: Val = undefined;
@@ -55,6 +62,24 @@ pub const Val = extern struct {
 
     pub fn unroot(val: *Val, ctx: *Store.Ctx) void {
         wasmtime_val_unroot(ctx, val);
+    }
+
+    pub fn equals(lhs: *const Val, rhs: *const Val) bool {
+        if (lhs.kind != rhs.kind) return false;
+        return switch (lhs.kind) {
+            inline .i32, .i64, .f32, .f64 => |kind| {
+                const lhs_field = @field(lhs.of, @tagName(kind));
+                const rhs_field = @field(rhs.of, @tagName(kind));
+                return lhs_field == rhs_field;
+            },
+            inline .anyref, .externref, .funcref => |kind| {
+                const lhs_field = &@field(lhs.of, @tagName(kind));
+                const rhs_field = &@field(rhs.of, @tagName(kind));
+                return lhs_field.equals(rhs_field);
+            },
+            .v128 => std.mem.eql(u8, &lhs.of.v128, &rhs.of.v128),
+            else => lhs.of.ptr == rhs.of.ptr,
+        };
     }
 
     pub const Raw = extern union {
@@ -89,12 +114,12 @@ pub const Val = extern struct {
     };
 
     pub const AnyRef = extern struct {
-        store_id: u64,
+        store_id: Store.Id,
         __private1: u32,
         __private2: u32,
 
         pub const @"null": AnyRef = .{
-            .store_id = 0,
+            .store_id = .null,
             .__private1 = undefined,
             .__private2 = undefined,
         };
@@ -125,12 +150,8 @@ pub const Val = extern struct {
             return null;
         }
 
-        pub fn isNull(ref: *const AnyRef) bool {
-            return ref.store_id == 0;
-        }
-
-        pub fn setNull(ref: *AnyRef) void {
-            ref.store_id = 0;
+        pub fn equals(lhs: *const AnyRef, rhs: *const AnyRef) bool {
+            return lhs.store_id == rhs.store_id;
         }
 
         pub fn clone(ref: *const AnyRef, ctx: *Store.Ctx) AnyRef {
@@ -145,12 +166,12 @@ pub const Val = extern struct {
     };
 
     pub const ExternRef = extern struct {
-        store_id: u64,
+        store_id: Store.Id,
         __private1: u32,
         __private2: u32,
 
         pub const @"null": ExternRef = .{
-            .store_id = 0,
+            .store_id = .null,
             .__private1 = undefined,
             .__private2 = undefined,
         };
@@ -165,12 +186,8 @@ pub const Val = extern struct {
             return wasmtime_externref_to_raw(ctx, ref);
         }
 
-        pub fn isNull(ref: *const ExternRef) bool {
-            return ref.store_id == 0;
-        }
-
-        pub fn setNull(ref: *ExternRef) void {
-            ref.store_id = 0;
+        pub fn equals(lhs: *const ExternRef, rhs: *const ExternRef) bool {
+            return lhs.store_id == rhs.store_id;
         }
 
         pub fn clone(ref: *const ExternRef, ctx: *Store.Ctx) ExternRef {
@@ -188,7 +205,7 @@ pub const Val = extern struct {
         }
     };
 
-    pub const ValKind = enum(u8) {
+    pub const Kind = enum(u8) {
         i32 = c.WASMTIME_I32,
         i64 = c.WASMTIME_I64,
         f32 = c.WASMTIME_F32,

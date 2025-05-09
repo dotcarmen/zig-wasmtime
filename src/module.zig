@@ -1,7 +1,8 @@
-const Engine = @import("engine.zig").Engine;
-const Err = @import("error.zig").Err;
-const Feature = @import("conf.zig").Feature;
-const wasm = @import("wasm.zig");
+const wasmtime = @import("root.zig");
+const wasm = wasmtime.wasm;
+const Engine = wasmtime.Engine;
+const Err = wasmtime.Err;
+const Feature = wasmtime.Feature;
 
 extern fn wasmtime_module_clone(*const Module) callconv(.c) ?*Module;
 extern fn wasmtime_module_delete(*Module) callconv(.c) void;
@@ -32,6 +33,15 @@ pub const Module = opaque {
         if (wasmtime_module_new(engine, binary.ptr, binary.len, &ret)) |err|
             return .{ .err = err };
         return .{ .ok = ret.? };
+    }
+
+    pub fn initWat(engine: *Engine, wat: []const u8) Err.Result(*Module) {
+        const translated = switch (wasmtime.wat2wasm(wat)) {
+            .ok => |ok| ok,
+            .err => |err| return .{ .err = err },
+        };
+
+        return init(engine, translated);
     }
 
     pub fn clone(module: *const Module) !*Module {

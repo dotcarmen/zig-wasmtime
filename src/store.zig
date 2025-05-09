@@ -1,13 +1,13 @@
 const c = @cImport(@cInclude("wasmtime/store.h"));
-const Engine = @import("engine.zig").Engine;
-const Err = @import("error.zig").Err;
-const Feature = @import("conf.zig").Feature;
-const WasiConfig = @import("wasi.zig").Config;
+
+const wasmtime = @import("root.zig");
+const wasm = wasmtime.wasm;
+const Err = wasmtime.Err;
 
 const std = @import("std");
 const assert = std.debug.assert;
 
-extern fn wasmtime_store_new(*Engine, ?*anyopaque, ?*const fn (*anyopaque) callconv(.c) void) ?*Store;
+extern fn wasmtime_store_new(*wasmtime.Engine, ?*anyopaque, ?wasm.Finalizer.Func) ?*Store;
 extern fn wasmtime_store_delete(*Store) callconv(.c) void;
 extern fn wasmtime_store_context(*Store) callconv(.c) *Context;
 extern fn wasmtime_store_limiter(*Store, u64, u64, u64, u64, u64) callconv(.c) void;
@@ -19,7 +19,7 @@ extern fn wasmtime_context_get_fuel(*const Context, *u64) callconv(.c) ?*Err;
 extern fn wasmtime_context_set_data(*Context, *anyopaque) callconv(.c) void;
 extern fn wasmtime_context_set_epoch_deadline(*Context, u64) callconv(.c) void;
 extern fn wasmtime_context_set_fuel(*Context, u64) callconv(.c) ?*Err;
-extern fn wasmtime_context_set_wasi(*Context, *WasiConfig) callconv(.c) ?*Err;
+extern fn wasmtime_context_set_wasi(*Context, *wasmtime.WasiConfig) callconv(.c) ?*Err;
 
 extern fn wasmtime_context_epoch_deadline_callback(
     *Context,
@@ -42,25 +42,18 @@ pub const Store = opaque {
 
     pub const deinit = wasmtime_store_delete;
 
-    pub fn init(engine: *Engine, data: anytype) void {
+    pub fn init(engine: *wasmtime.Engine, data: anytype) *Store {
         const Env = switch (@typeInfo(@TypeOf(data))) {
-            .null => return wasmtime_store_new(engine, null, null).?,
-            .optional, .pointer => |info| info.child,
+            .null => struct {},
+            .pointer => |info| info.child,
             else => @compileError("unsupported type: " ++ @typeName(@TypeOf(data))),
         };
 
-        const finalize: *const fn (*Env) callconv(.c) void =
-            if (@hasDecl(Env, "finalize"))
-                Env.finalize
-            else
-                null;
-
-        return wasmtime_store_new(engine, data, finalize).?;
+        const finalizer = wasm.Finalizer.of(Env);
+        return wasmtime_store_new(engine, data, finalizer).?;
     }
 
-    pub const getContext = wasmtime_store_context;
-    pub const getContextConst: *const fn (*const Store) callconv(.c) *const Ctx =
-        @ptrCast(&wasmtime_store_context);
+    pub const ctx = wasmtime_store_context;
 
     /// \brief Provides limits for a store. Used by hosts to limit resource
     /// consumption of instances. Use negative value to keep the default value
@@ -121,17 +114,17 @@ const Context = opaque {
     pub const setEpochDeadline = wasmtime_context_set_epoch_deadline;
 
     pub fn setAsyncFuelYieldInterval(context: *Context, interval: u64) ?*Err {
-        comptime assert(Feature.@"async".isEnabled());
+        comptime assert(wasmtime.Feature.@"async".isEnabled());
         return wasmtime_context_fuel_async_yield_interval(context, interval);
     }
 
     pub fn setAsyncYieldAndUpdateEpochDeadline(context: *Context, delta: u64) ?*Err {
-        comptime assert(Feature.@"async".isEnabled());
+        comptime assert(wasmtime.Feature.@"async".isEnabled());
         return wasmtime_context_epoch_deadline_async_yield_and_update(context, delta);
     }
 
-    pub fn setWasi(context: *Context, wasi_config: *WasiConfig) ?*Err {
-        comptime assert(Feature.wasi.isEnabled());
+    pub fn setWasi(context: *Context, wasi_config: *wasmtime.WasiConfig) ?*Err {
+        comptime assert(wasmtime.Feature.wasi.isEnabled());
         return wasmtime_context_set_wasi(context, wasi_config);
     }
 
