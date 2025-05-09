@@ -1,0 +1,19 @@
+.{
+    .fingerprint = 0x2971c2fbb14096e8, // Changing this has security and trust implications.
+    .name = .zig_wasmtime,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.14.0",
+
+    .dependencies = .{
+        .wasmtime = .{
+            .url = "https://github.com/ByteCodeAlliance/wasmtime/archive/v32.0.0.tar.gz",
+            .hash = "N-V-__8AADl3ugO94plFf8qp-IQCVacITXzrQjNfQYO_KLei",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
